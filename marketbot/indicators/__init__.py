@@ -184,6 +184,18 @@ CLOSE_INDICATORS: dict[str, Callable] = {
     "awesome": lambda c, p: awesome_oscillator(c, p),
     "rvi": lambda c, p: rvi(c, p),
     "ppo": lambda c, p: ppo(closes(c), p)[0],
+    # These three were defined and imported but never registered, so they were
+    # invisible to `compute` and absent from `available()` — and the CLI's
+    # default list still asked for "macd", which raised KeyError.
+    # macd's own `fast`/`slow`/`signal` are its real knobs, so `period` must not
+    # be forwarded positionally: it would silently rebind `fast`.
+    "macd": _closes_fn(lambda v, p: macd(v)[0]),
+    "macd_signal": _closes_fn(lambda v, p: macd(v)[1]),
+    "macd_hist": _closes_fn(lambda v, p: macd(v)[2]),
+    "kst": _closes_fn(lambda v, p: kst(v)[0]),
+    "kst_signal": _closes_fn(lambda v, p: kst(v)[1]),
+    "fisher": _closes_fn(lambda v, p: fisher_transform(v, p)[0]),
+    "fisher_trigger": _closes_fn(lambda v, p: fisher_transform(v, p)[1]),
 }
 
 # callables taking (candles, params) -> list aligned to input.

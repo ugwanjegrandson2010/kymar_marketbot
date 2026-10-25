@@ -61,14 +61,16 @@ def cmd_indicators(args) -> int:
 
     with Universe(args.config) as u:
         candles = u.yahoo.fetch_candles(args.symbol, interval=args.interval, limit=args.bars)
-    for name in (args.name or ["rsi", "sma", "macd", "atr"]):
+    names = args.name or ["rsi", "sma", "macd", "atr"]
+    data = {}
+    for name in names:
         series = compute(name, candles, args.period)
         defined = [v for v in series if v is not None]
-        last = series[-1]
-        print(
-            f"{name:14} period={args.period:<4} defined={len(defined):>5} "
-            f"last={last if last is None else round(last, 6)}"
-        )
+        data[name] = {"period": args.period, "defined": len(defined),
+                      "last": series[-1] if series else None}
+    from .report import indicators_report
+
+    print(indicators_report(data, args.symbol))
     return 0
 
 
@@ -236,6 +238,7 @@ def build_parser() -> argparse.ArgumentParser:
     i.add_argument("--list", action="store_true")
     i.add_argument("--name", action="append")
     i.add_argument("--period", type=int, default=14)
+    add_common(i)
     i.set_defaults(func=cmd_indicators)
 
     b = sub.add_parser("backtest", help="backtest one strategy on one symbol")
@@ -246,7 +249,8 @@ def build_parser() -> argparse.ArgumentParser:
     b.set_defaults(func=cmd_backtest)
 
     c = sub.add_parser("compare", help="rank strategies on one symbol")
-    c.add_argument("--strategies", default=None, help="comma-separated subset")
+    c.add_argument("--strategies", "--strategy", default=None,
+                   help="comma-separated subset (alias: --strategy)")
     add_common(c)
     c.add_argument("--json", action="store_true")
     c.set_defaults(func=cmd_compare)

@@ -158,7 +158,9 @@ def banner(text: str, width: int = 78, slogan: str = "", pal: Palette = DEFAULT)
             continue
         for i in range(5):
             rows[i] += glyph[i] + "  "
-    lines = [pal.paint(row.rstrip(), "accent") for row in rows]
+    # Fixed-width rows, not rstripped: stripping made each row's width depend on
+    # the final glyph, so the banner no longer aligned with itself.
+    lines = [pal.paint(row[:width], "accent") for row in rows]
     if slogan:
         lines.append("")
         lines.append(pal.paint(pad(slogan, width, "center"), "muted"))
@@ -353,27 +355,47 @@ def table(
     align_right: Optional[Sequence[int]] = None,
 ) -> str:
     """Aligned table. Truncates rather than wraps — a wrapping table cannot be
-    scanned; full values belong in a detail view."""
+    scanned; full values belong in a detail view.
+
+    Headers count toward the column width. Measuring only the data truncates
+    any column whose header is longer than every cell ("trades" became "tr"),
+    which is the difference between a table and a puzzle.
+    """
     if not rows:
         return notice("empty", ["no rows to display"], pal=pal)
-    widths = [max(cell_width(str(r[i])) for r in rows) + 2 for i in range(len(headers))]
-    align_right = align_right or []
+    align_right = set(align_right or [])
     c = _BOX["light"]
-    # Junctions between columns must be a cross, not a T: ├──┼──┤
-    sep = c[6] + c[10].join(c[4] * w for w in widths) + c[7]
+    widths = [
+        max([cell_width(str(h)) for h in headers]
+            + [cell_width(str(r[i])) for r in rows]) + 2
+        for i in range(len(headers))
+    ]
 
     def fmt(cells, header=False):
         out = []
         for i, cell in enumerate(cells):
             cell = str(cell)[: max(0, widths[i] - 1)]
-            style = "right" if i in align_right else "left"
-            text = pad(cell, widths[i] - 1, style)
-            out.append(pal.paint(text, "accent" if header else ""))
+            # Headers are never right-aligned: a right-aligned header reads as a
+            # data value and breaks the association with its column.
+            style = "right" if (i in align_right and not header) else "left"
+            out.append(pal.paint(pad(cell, widths[i] - 1, style),
+                                 "accent" if header else ""))
         return c[5] + c[5].join(out) + c[5]
 
-    lines = [pal.paint(sep, "muted"), fmt(headers, header=True), pal.paint(sep, "muted")]
+    # A table is a box: it needs its own corners. Reusing the row separator for
+    # the top and bottom drew a T where a corner belongs.
+    #
+    # The border draws `widths[i] - 1` dashes per column, exactly matching the
+    # cell interior — drawing `widths[i]` made every border six characters
+    # wider than the rows it was supposed to frame.
+    top = c[0] + c[8].join(c[4] * (w - 1) for w in widths) + c[1]
+    mid = c[6] + c[10].join(c[4] * (w - 1) for w in widths) + c[7]
+    bottom = c[2] + c[9].join(c[4] * (w - 1) for w in widths) + c[3]
+
+    lines = [pal.paint(top, "muted"), fmt(headers, header=True),
+             pal.paint(mid, "muted")]
     lines += [fmt(r) for r in rows]
-    lines.append(pal.paint(sep, "muted"))
+    lines.append(pal.paint(bottom, "muted"))
     return "\n".join(lines)
 
 

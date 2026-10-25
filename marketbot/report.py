@@ -162,10 +162,10 @@ def backtest_report(result, pal: Optional[Palette] = None) -> str:
                 f"{t.pnl:+,.2f}",
                 t.exit_reason or "",
             ])
-        out += ["", art.panel("Recent trades", [art.table(
+        out += ["", pal.paint("Recent trades", "accent"), art.table(
             ["symbol", "side", "entry", "exit", "pnl", "exit reason"],
             rows, pal, align_right=[2, 3, 4],
-        )], pal=pal, wrap_body=False)]
+        )]
 
     out += ["", art.rule(78, pal=pal)]
     out.append(pal.paint(
@@ -199,12 +199,9 @@ def compare_report(rows: Sequence[dict], pal: Optional[Palette] = None) -> str:
         ["strategy", "return", "sharpe", "maxDD", "trades", "win"],
         table_rows, pal,
     )
-    lines = [art.panel(
-        "Strategy ranking",
-        [table_block],
-        pal=pal,
-        wrap_body=False,
-    )]
+    # A table is already a box. Nesting it inside a panel doubles every border,
+    # so title it with a rule instead.
+    lines = [pal.paint("Strategy ranking", "accent"), table_block]
 
     n_profitable = sum(1 for r in rows if (r.get("total_return") or 0) > 0)
     lines += [
@@ -238,12 +235,8 @@ def firm_report(result: dict, pal: Optional[Palette] = None) -> str:
             f"{a.get('confidence', 0) * 100:.0f}%",
             a.get("reasoning", ""),
         ])
-    lines.append(art.panel(
-        "Analysts",
-        [art.table(["role", "view", "conf", "reasoning"], analyst_rows, pal)],
-        pal=pal,
-        wrap_body=False,
-    ))
+    lines.append(pal.paint("Analysts", "accent"))
+    lines.append(art.table(["role", "view", "conf", "reasoning"], analyst_rows, pal))
 
     debate = result.get("debate", {})
     lines.append(art.panel("Debate", [
@@ -300,4 +293,4 @@ def indicators_report(data: dict, symbol: str, pal: Optional[Palette] = None) ->
             f"{undefined} indicators returned no value — shown as undefined, not zero.",
             "warn",
         )]
-    return art.panel(f"Indicators — {symbol}", body, pal=pal, wrap_body=False)
+    return "\n".join([pal.paint(f"Indicators — {symbol}", "accent")] + body)

@@ -12,7 +12,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from marketbot.indicators import ALL_INDICATORS, compute, compute_all
+from marketbot.indicators import ALL_INDICATORS, available, compute, compute_all
 from marketbot.indicators.core import closes, sma
 from marketbot.indicators.oscillators import rsi
 from marketbot.model import Candle
@@ -155,6 +155,52 @@ class TestNoLookAhead(unittest.TestCase):
                     self.assertAlmostEqual(
                         a, b, places=9, msg=f"{name}[{i}] changed when future was removed"
                     )
+
+
+class TestEveryRegisteredIndicatorComputes(unittest.TestCase):
+    """The regression that hid MACD.
+
+    `macd`, `kst`, and `fisher_transform` were defined and imported but never
+    added to the registry, so `available()` omitted them and `compute("macd")`
+    raised KeyError. Nothing caught it because no test iterated the registry.
+    """
+
+    def test_registry_is_sorted(self):
+        names = available()
+        self.assertEqual(names, sorted(names))
+        self.assertGreater(len(names), 40)
+
+    def test_every_registered_indicator_computes_without_raising(self):
+        candles = make_candles(80)
+        failures = []
+        for name in available():
+            try:
+                series = compute(name, candles, 14)
+            except Exception as e:  # noqa: BLE001
+                failures.append(f"{name}: {type(e).__name__}: {e}")
+                continue
+            if not isinstance(series, list):
+                failures.append(f"{name}: returned {type(series).__name__}, not a list")
+            elif len(series) != len(candles):
+                failures.append(f"{name}: length {len(series)} != {len(candles)}")
+        self.assertEqual(failures, [],
+                         "indicators that do not compute:\n  " + "\n  ".join(failures))
+
+    def test_known_oscillators_are_registered(self):
+        names = set(available())
+        for expected in ("macd", "macd_signal", "macd_hist", "kst", "kst_signal",
+                         "fisher", "fisher_trigger", "ppo", "rsi", "sma", "atr"):
+            self.assertIn(expected, names, f"{expected} missing from the registry")
+
+    def test_cli_default_indicators_all_exist(self):
+        """The CLI asks for these by default; they must all be registered."""
+        names = set(available())
+        for default in ("rsi", "sma", "macd", "atr"):
+            self.assertIn(default, names, f"CLI default {default!r} is not registered")
+
+    def test_unknown_indicator_raises_keyerror(self):
+        with self.assertRaises(KeyError):
+            compute("definitely_not_an_indicator", make_candles(20), 14)
 
 
 if __name__ == "__main__":
