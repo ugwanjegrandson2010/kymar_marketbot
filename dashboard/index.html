@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MarketBot</title>
+<link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+<header>
+  <h1>MarketBot</h1>
+  <p class="subtitle">Backtest, paper trade, and analyse crypto and stocks. Live trading requires an explicit opt-in.</p>
+  <div class="status" id="live-status">checking&hellip;</div>
+</header>
+
+<section class="controls">
+  <label>Symbol <input id="symbol" value="BTC-USD"></label>
+  <label>Bars <input id="bars" type="number" value="500"></label>
+  <label>Strategy <select id="strategy"></select></label>
+  <label>Interval
+    <select id="interval">
+      <option value="1d" selected>daily</option>
+      <option value="1h">hourly</option>
+      <option value="4h">4-hour</option>
+      <option value="1w">weekly</option>
+    </select>
+  </label>
+  <button id="run">Backtest</button>
+  <button id="compare">Compare all</button>
+  <button id="firm">Ask the firm</button>
+  <button id="chart">Show chart</button>
+</section>
+
+<section class="grid">
+  <div class="card span-2">
+    <h2>Performance</h2>
+    <div id="metrics" class="metrics"></div>
+  </div>
+  <div class="card span-2">
+    <h2>Equity curve</h2>
+    <canvas id="equity" height="180"></canvas>
+  </div>
+  <div class="card span-2">
+    <h2>Trades</h2>
+    <div id="trades" class="scroll"></div>
+  </div>
+  <div class="card span-2">
+    <h2>Strategy comparison</h2>
+    <div id="comparison" class="scroll"></div>
+  </div>
+  <div class="card span-2">
+    <h2>Firm decision</h2>
+    <div id="firmout"></div>
+  </div>
+  <div class="card span-2 caution">
+    <h2>Risk rules this system enforces</h2>
+    <ul>
+      <li>Position size is derived from the stop distance, never from conviction.</li>
+      <li>A signal is never filled on the bar it was generated from.</li>
+      <li>Max drawdown and daily-loss limits halt trading until manually reset.</li>
+      <li>The risk manager's veto cannot be overridden by the portfolio manager.</li>
+      <li>Live trading is off unless an explicit flag, credentials, and a confirmation phrase are all present.</li>
+    </ul>
+  </div>
+</section>
+
+<footer>
+  <span>Educational software. Nothing here is financial advice. Past backtested performance does not predict future results.</span>
+</footer>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>
