@@ -271,10 +271,11 @@ class TestConfig(unittest.TestCase):
                 "from marketbot.config import load_config\n"
                 "c = load_config()\n"
                 "print(c.starting_cash, c.fee_rate)\n"
-            ) % (str(cfgmod.PROJECT_ROOT.parent), tmp)
+            ) % (str(cfgmod.PROJECT_ROOT), tmp)
             out = subprocess.run([sys.executable, "-c", code],
                                  capture_output=True, text=True, timeout=60)
-            self.assertEqual(out.stdout.strip(), "31337.0 0.03")
+            self.assertEqual(out.stdout.strip(), "31337.0 0.03",
+                             msg=f"rc={out.returncode} stderr={out.stderr[-400:]}")
 
     def test_real_environment_beats_env_file(self):
         """An explicit export must override the file, not the reverse."""
@@ -292,10 +293,11 @@ class TestConfig(unittest.TestCase):
                 "os.environ['MARKETBOT_STARTING_CASH'] = '2222'\n"
                 "from marketbot.config import load_config\n"
                 "print(load_config().starting_cash)\n"
-            ) % (str(cfgmod.PROJECT_ROOT.parent), tmp)
+            ) % (str(cfgmod.PROJECT_ROOT), tmp)
             out = subprocess.run([sys.executable, "-c", code],
                                  capture_output=True, text=True, timeout=60)
-            self.assertEqual(out.stdout.strip(), "2222.0")
+            self.assertEqual(out.stdout.strip(), "2222.0",
+                             msg=f"rc={out.returncode} stderr={out.stderr[-400:]}")
 
     def test_repr_never_leaks_a_credential(self):
         """A stray repr or log line must not expose the key."""
@@ -306,6 +308,7 @@ class TestConfig(unittest.TestCase):
 
     def test_env_file_is_gitignored(self):
         """The file that holds credentials must never be tracked."""
+        import pathlib
         import subprocess
 
         root = pathlib.Path(__file__).resolve().parent.parent
