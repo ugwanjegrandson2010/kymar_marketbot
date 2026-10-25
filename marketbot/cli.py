@@ -37,10 +37,14 @@ def cmd_universe(args) -> int:
             print(f"universe: {len(assets)} assets -> {u.config.cache_db.parent / 'universe.json'}")
         assets = u.load() or u.defaults(include_stocks=not args.crypto_only)
         if args.verify:
+            # `--interval` and `--min-bars` must both be parsed here, or this
+            # branch raises AttributeError on args.interval — which it did, from
+            # the initial commit, because nothing ever ran `universe --verify`.
             report = u.verify(assets, interval=args.interval, min_bars=args.min_bars)
             _print({
                 "ok": len(report["ok"]),
                 "failed": len(report["failed"]),
+                "total": report["total"],
                 "failures": report["failed"][:20],
             })
         else:
@@ -232,6 +236,8 @@ def build_parser() -> argparse.ArgumentParser:
     u.add_argument("--long-tail-pages", type=int, default=0)
     u.add_argument("--crypto-only", action="store_true")
     u.add_argument("--min-bars", type=int, default=60)
+    u.add_argument("--interval", default="1d",
+                   help="candle interval used when verifying (default 1d)")
     u.set_defaults(func=cmd_universe)
 
     i = sub.add_parser("indicators", help="list or compute indicators")

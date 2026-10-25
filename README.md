@@ -36,8 +36,8 @@ results are not predictions. Most strategies in this repo lose money.
 | Area | Contents |
 | --- | --- |
 | `data/` | CoinGecko provider (all ~22k coins, paginated, demo-key aware), Yahoo provider (stocks, ETFs, crypto majors — full OHLCV), SQLite candle cache with TTL, universe builder with a liquidity floor |
-| `indicators/` | 55 indicators across trend, momentum, volatility, volume, and candlestick patterns, plus a name registry |
-| `strategies/` | 28 strategies: classic indicator systems, 12 attributed to named traders, and a composite strategy that votes across every indicator |
+| `indicators/` | 62 indicators across trend, momentum, volatility, volume, and candlestick patterns, plus a name registry |
+| `strategies/` | 36 strategies: classic indicator systems, 12 attributed to named traders, and a composite strategy that votes across every indicator |
 | `backtest/` | Event-driven engine with fees, slippage, and next-bar execution; metrics; walk-forward optimizer with parameter-stability analysis |
 | `risk/` | Position sizing from stop distance (not conviction), quarter-Kelly, volatility targeting, and hard drawdown / daily-loss kill switches |
 | `broker/` | Paper broker and a locked live broker behind a shared interface |
@@ -143,9 +143,13 @@ decides whether to act, and risk limits sit outside its reach.
 ## Tests
 
 ```bash
-python -m unittest discover -s tests -v      # 140+ tests
+python -m unittest discover -s tests -v      # 143 tests
 python scripts/verify_indicators.py           # indicator integrity on live data
 ```
+
+The counts in the table above are asserted against the registries by
+`tests/test_readme.py`, so adding an indicator or strategy without updating
+this file fails the suite instead of silently making the README wrong.
 
 Coverage: indicators (alignment, no-look-ahead, hand-computed values), risk
 sizing and kill switches, every strategy running end-to-end, engine mechanics

@@ -223,6 +223,174 @@ class TestUniverse(unittest.TestCase):
             self.assertEqual([a.symbol for a in loaded], [a.symbol for a in assets])
             u.close()
 
+    def test_defaults_have_no_dead_symbols(self):
+        """Every default crypto major must be resolvable by its own provider.
+
+        A dead symbol (MATIC-USD after Polygon's migration) silently drops a row
+        from every default-universe run. This catches it without touching the
+        network: the failure mode is a slug/symbol mismatch, not a transport
+        error, and that is checkable locally.
+        """
+        from marketbot.data import Universe
+
+        assets = Universe().defaults(include_stocks=False)
+        for a in assets:
+            self.assertTrue(a.symbol, a)
+            self.assertTrue(a.native_id, f"{a.symbol} has no provider id")
+
+    def test_verify_sends_a_provider_specific_id(self):
+        """`native_id` is the CoinGecko slug; a Yahoo asset must send its symbol.
+
+        Passing the slug to Yahoo produced HTTP 404 for every crypto major,
+        because "cardano" is not a Yahoo symbol. The providers are stubs, so
+        this asserts the *query string* each one receives.
+        """
+        from marketbot.data import Universe
+        from marketbot.data.universe import Asset
+
+        seen = []
+
+        class StubProvider:
+            def __init__(self, tag):
+                self.tag = tag
+
+            def fetch_candles(self, symbol, interval="1d", limit=60, **kw):
+                seen.append((self.tag, symbol))
+                return [Candle(ts=i, open=1, high=2, low=0.5, close=1.5,
+                               volume=10, symbol=symbol) for i in range(limit)]
+
+        u = Universe()
+        u.yahoo = StubProvider("yahoo")
+        u.coingecko = StubProvider("coingecko")
+
+        assets = [
+            # A Yahoo asset whose native_id is a CoinGecko slug: the exact case
+            # that used to 404.
+            Asset(symbol="ADA-USD", provider="yahoo", native_id="cardano"),
+            Asset(symbol="ADA-USD", provider="coingecko", native_id="cardano"),
+        ]
+        report = u.verify(assets, min_bars=60)
+
+        self.assertEqual(report["failed"], [])
+        self.assertEqual(len(report["ok"]), 2)
+        by_tag = dict(seen)
+        self.assertEqual(by_tag["yahoo"], "ADA-USD",
+                         "yahoo must be queried by canonical symbol, not the slug")
+        self.assertEqual(by_tag["coingecko"], "cardano",
+                         "coingecko must be queried by its own coin id")
+        u.close()
+
+    def test_verify_records_a_failure_instead_of_raising(self):
+        """One unreachable asset must not abort verification of the rest."""
+        from marketbot.data import Universe
+        from marketbot.data.base import DataError
+        from marketbot.data.universe import Asset
+
+        class FlakyProvider:
+            def fetch_candles(self, symbol, interval="1d", limit=60, **kw):
+                if symbol == "BAD-USD":
+                    raise DataError("HTTP 404")
+                return [Candle(ts=i, open=1, high=2, low=0.5, close=1.5,
+                               volume=10, symbol=symbol) for i in range(limit)]
+
+        u = Universe()
+        u.yahoo = FlakyProvider()
+        u.coingecko = FlakyProvider()
+
+        report = u.verify(
+            [Asset(symbol="BAD-USD", provider="yahoo"),
+             Asset(symbol="GOOD-USD", provider="yahoo")],
+            min_bars=60,
+        )
+        self.assertEqual(len(report["ok"]), 1)
+        self.assertEqual(len(report["failed"]), 1)
+        self.assertEqual(report["failed"][0]["symbol"], "BAD-USD")
+        self.assertIn("404", report["failed"][0]["error"])
+        u.close()
+
+    def test_verify_survives_a_transport_error(self):
+        """A non-DataError (socket/timeout) is reported, not propagated."""
+        from marketbot.data import Universe
+        from marketbot.data.universe import Asset
+
+        class DeadProvider:
+            def fetch_candles(self, symbol, interval="1d", limit=60, **kw):
+                raise OSError("connection reset")
+
+        u = Universe()
+        u.yahoo = DeadProvider()
+        u.coingecko = DeadProvider()
+
+        report = u.verify([Asset(symbol="X-USD", provider="yahoo")], min_bars=60)
+        self.assertEqual(len(report["failed"]), 1)
+        self.assertIn("OSError", report["failed"][0]["error"])
+        u.close()
+
+
+class TestUniverseCli(unittest.TestCase):
+    """`universe --verify` must run at all.
+
+    It crashed with AttributeError from the initial commit because the parser
+    never defined --interval while the handler read args.interval.
+    """
+
+    def test_verify_flag_parses_interval_and_min_bars(self):
+        from marketbot.cli import build_parser
+
+        args = build_parser().parse_args(["universe", "--verify"])
+        self.assertTrue(args.verify)
+        self.assertEqual(args.interval, "1d")
+        self.assertEqual(args.min_bars, 60)
+        self.assertTrue(callable(args.func))
+
+    def test_verify_runs_end_to_end_with_a_stubbed_universe(self):
+        """The handler's contract: it calls verify() with the parsed args."""
+        from marketbot import cli
+
+        captured = {}
+
+        class StubUniverse:
+            def __init__(self, config):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def load(self):
+                return []
+
+            def defaults(self, include_stocks=True):
+                return []
+
+            def verify(self, assets, *, interval="1d", min_bars=60):
+                captured["interval"] = interval
+                captured["min_bars"] = min_bars
+                captured["assets"] = list(assets)
+                return {"ok": [], "failed": [], "total": 0}
+
+        class StubConfig:
+            pass
+
+        import marketbot.data as data_mod
+
+        real = data_mod.Universe
+        data_mod.Universe = StubUniverse
+        try:
+            args = cli.build_parser().parse_args(
+                ["universe", "--verify", "--interval", "1h", "--min-bars", "30"]
+            )
+            args.config = StubConfig()
+            rc = cli.cmd_universe(args)
+        finally:
+            data_mod.Universe = real
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(captured["interval"], "1h")
+        self.assertEqual(captured["min_bars"], 30)
+
 
 class TestConfig(unittest.TestCase):
     def test_live_trading_defaults_off(self):
