@@ -13,6 +13,41 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 _ENV_PREFIX = "MARKETBOT_"
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _load_dotenv() -> None:
+    """Load KEY=VALUE pairs from .env files into os.environ.
+
+    A `.env` file placed in the project root is read even when the bot is
+    launched from another directory, and the current working directory's .env
+    is read as a fallback.
+
+    Real environment variables always win: an explicit `export` must override
+    a file, not the other way round. Values are never printed, logged, or
+    written into results — they are credentials.
+    """
+    for path in (PROJECT_ROOT / ".env", Path.cwd() / ".env"):
+        try:
+            if not path.is_file():
+                continue
+            text = path.read_text()
+        except OSError:
+            continue
+        for line in text.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            if key.startswith("export "):
+                key = key[len("export "):].strip()
+            value = value.strip().strip('"').strip("'")
+            if key and key not in os.environ:
+                os.environ[key] = value
+
+
+_load_dotenv()
 
 
 def _env(name: str, default):
@@ -29,7 +64,6 @@ def _env(name: str, default):
     return raw
 
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = Path(_env("DATA_DIR", PROJECT_ROOT / "data"))
 CACHE_DB = Path(_env("CACHE_DB", DATA_DIR / "cache.db"))
 STATE_DB = Path(_env("STATE_DB", DATA_DIR / "state.db"))
@@ -79,6 +113,31 @@ class Config:
 
     def __post_init__(self):
         DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+    def __repr__(self) -> str:
+        """Mask credentials so a stray repr or log line cannot leak a secret."""
+        fields = []
+        for f in self.__dataclass_fields__:
+            value = getattr(self, f)
+            if "key" in f.lower() or "secret" in f.lower():
+                value = f"<{len(str(value))} chars>" if value else "<empty>"
+            fields.append(f"{f}={value!r}")
+        return f"Config({', '.join(fields)})"
+
+    def masked_summary(self) -> dict:
+        """Config summary safe to log or return from an API."""
+        return {
+            "live_trading": self.live_trading,
+            "starting_cash": self.starting_cash,
+            "fee_rate": self.fee_rate,
+            "slippage_rate": self.slippage_rate,
+            "risk_per_trade": self.risk_per_trade,
+            "max_drawdown_pct": self.max_drawdown_pct,
+            "max_daily_loss_pct": self.max_daily_loss_pct,
+            "allow_short": self.allow_short,
+            "cache_db": str(self.cache_db),
+            "has_coingecko_key": bool(self.coingecko_api_key),
+        }
 
 
 def load_config(**overrides) -> Config:

@@ -248,6 +248,71 @@ class TestConfig(unittest.TestCase):
         finally:
             del os.environ["MARKETBOT_STARTING_CASH"]
 
+    def test_env_file_in_project_root_is_loaded(self):
+        """A .env in the project root must be read even when CWD is elsewhere.
+
+        This was a real bug: config.py read only os.environ, so a key placed in
+        .env was silently ignored.
+        """
+        import pathlib
+        import subprocess
+        import sys
+        import tempfile
+
+        from marketbot import config as cfgmod
+
+        with tempfile.TemporaryDirectory() as tmp:
+            pathlib.Path(tmp, ".env").write_text(
+                "MARKETBOT_STARTING_CASH=31337\n"
+                "MARKETBOT_FEE_RATE=0.03\n"
+            )
+            code = (
+                "import sys, os; sys.path.insert(0, %r); os.chdir(%r)\n"
+                "from marketbot.config import load_config\n"
+                "c = load_config()\n"
+                "print(c.starting_cash, c.fee_rate)\n"
+            ) % (str(cfgmod.PROJECT_ROOT.parent), tmp)
+            out = subprocess.run([sys.executable, "-c", code],
+                                 capture_output=True, text=True, timeout=60)
+            self.assertEqual(out.stdout.strip(), "31337.0 0.03")
+
+    def test_real_environment_beats_env_file(self):
+        """An explicit export must override the file, not the reverse."""
+        import pathlib
+        import subprocess
+        import sys
+        import tempfile
+
+        from marketbot import config as cfgmod
+
+        with tempfile.TemporaryDirectory() as tmp:
+            pathlib.Path(tmp, ".env").write_text("MARKETBOT_STARTING_CASH=1111\n")
+            code = (
+                "import sys, os; sys.path.insert(0, %r); os.chdir(%r)\n"
+                "os.environ['MARKETBOT_STARTING_CASH'] = '2222'\n"
+                "from marketbot.config import load_config\n"
+                "print(load_config().starting_cash)\n"
+            ) % (str(cfgmod.PROJECT_ROOT.parent), tmp)
+            out = subprocess.run([sys.executable, "-c", code],
+                                 capture_output=True, text=True, timeout=60)
+            self.assertEqual(out.stdout.strip(), "2222.0")
+
+    def test_repr_never_leaks_a_credential(self):
+        """A stray repr or log line must not expose the key."""
+        cfg = load_config(coingecko_api_key="CG-LEAKTEST1234567890")
+        self.assertNotIn("CG-LEAKTEST1234567890", repr(cfg))
+        self.assertNotIn("CG-LEAKTEST1234567890", str(cfg.masked_summary()))
+        self.assertTrue(cfg.masked_summary()["has_coingecko_key"])
+
+    def test_env_file_is_gitignored(self):
+        """The file that holds credentials must never be tracked."""
+        import subprocess
+
+        root = pathlib.Path(__file__).resolve().parent.parent
+        out = subprocess.run(["git", "-C", str(root), "check-ignore", "-v", ".env"],
+                             capture_output=True, text=True)
+        self.assertIn(".env", out.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

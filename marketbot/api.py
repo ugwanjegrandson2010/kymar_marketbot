@@ -18,17 +18,63 @@ from .config import load_config
 from .data import Universe
 from .strategies import available, describe
 
+# FastAPI is imported lazily on purpose. The CLI, the TUI, the backtester, the
+# paper broker, and every test import this package; none of them need FastAPI,
+# and a module-level import meant that a single missing dependency made
+# `marketbot.api` — and anything importing it — fail with an opaque error.
+_FASTAPI_IMPORT_ERROR: Optional[Exception] = None
 try:
     from fastapi import FastAPI, HTTPException, Query
     from fastapi.middleware.cors import CORSMiddleware
     from fastapi.responses import FileResponse
     from fastapi.staticfiles import StaticFiles
     from pydantic import BaseModel
-except ImportError as e:  # pragma: no cover
-    raise ImportError(
-        "FastAPI is required for the API server. Install it or use the CLI instead: "
-        "python -m marketbot <command>"
-    ) from e
+except ImportError as e:  # pragma: no cover - depends on the environment
+    _FASTAPI_IMPORT_ERROR = e
+
+
+def fastapi_status() -> dict:
+    """Report whether the HTTP API can run, and why not if it cannot.
+
+    The message names the interpreter to check, because "fastapi is missing"
+    almost always means the wrong Python is being used rather than a broken
+    install.
+    """
+    import sys
+
+    if _FASTAPI_IMPORT_ERROR is None:
+        import fastapi
+
+        return {
+            "available": True,
+            "version": getattr(fastapi, "__version__", "unknown"),
+            "python": sys.executable,
+        }
+    return {
+        "available": False,
+        "python": sys.executable,
+        "error": str(_FASTAPI_IMPORT_ERROR),
+        "diagnostic": (
+            'Run: python -c "import sys, fastapi; print(sys.executable, fastapi.__version__)"'
+        ),
+        "note": (
+            "The CLI, TUI, backtester and paper broker do not need FastAPI."
+        ),
+    }
+
+
+def _require_fastapi():
+    if _FASTAPI_IMPORT_ERROR is not None:
+        raise ImportError(
+            "FastAPI is required for the HTTP API but could not be imported:\n"
+            f"  {_FASTAPI_IMPORT_ERROR}\n\n"
+            f"Interpreter in use: {fastapi_status()['python']}\n"
+            f"{fastapi_status()['diagnostic']}\n\n"
+            "Everything else runs without it:\n"
+            "  python -m marketbot backtest --symbol BTC-USD --strategy sma_crossover\n"
+            "  python -m marketbot.tui_main\n"
+            "  ./verify.sh"
+        ) from _FASTAPI_IMPORT_ERROR
 
 
 @lru_cache(maxsize=4)
@@ -36,7 +82,9 @@ def _config(**overrides):
     return load_config(**overrides)
 
 
-def create_app(config=None) -> FastAPI:
+def create_app(config=None):
+    """Build the FastAPI app. Raises ImportError with a diagnosis if FastAPI is absent."""
+    _require_fastapi()
     app = FastAPI(
         title="MarketBot",
         version="0.1.0",
@@ -266,13 +314,26 @@ def create_app(config=None) -> FastAPI:
     return app
 
 
-app = create_app()
+def get_app():
+    """Return a shared app instance, building it on first use.
+
+    The app is built lazily rather than at import time so that importing
+    `marketbot.api` never requires FastAPI. `python -m marketbot.api` calls this
+    through `main()`, and a bare `import marketbot.api` stays side-effect free.
+    """
+    global app
+    if app is None:
+        app = create_app()
+    return app
+
+
+app = None
 
 
 def main(host: str = "127.0.0.1", port: int = 8000) -> None:
     import uvicorn
 
-    uvicorn.run(app, host=host, port=port, log_level="info")
+    uvicorn.run(get_app(), host=host, port=port, log_level="info")
 
 
 if __name__ == "__main__":
