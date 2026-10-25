@@ -29,6 +29,7 @@ import time
 from typing import Callable, Optional
 
 from . import __version__
+from .art import cell_width, pad, rule, sparkline
 from .config import load_config
 
 SCREENS = ["Markets", "Backtest", "Compare", "Optimize", "AI Firm", "Indicators", "Risk"]
@@ -36,6 +37,42 @@ SYMBOLS = [
     "BTC-USD", "ETH-USD", "SOL-USD", "XRP-USD", "ADA-USD",
     "AAPL", "MSFT", "NVDA", "AMZN", "TSLA",
 ]
+
+# art.py palette token -> curses colour pair. Keeping the mapping in one place
+# means the TUI and the CLI cannot drift into two different colour languages.
+TOKEN_PAIR = {
+    "accent": 1,
+    "ok": 2,
+    "bad": 3,
+    "warn": 4,
+    "accent2": 5,
+    "muted": 6,
+}
+
+
+def _banner_lines(text: str, slogan: str = "", width: int = 78) -> list:
+    """The block-letter banner as plain lines, ready for curses.
+
+    curses does not interpret ANSI escape sequences, so the TUI uses the same
+    font as art.banner but paints each line with a colour pair instead.
+    """
+    from .art import _font
+
+    font = _font()
+    rows = [""] * 5
+    for ch in text.upper():
+        glyph = font.get(ch)
+        if glyph is None:
+            for i in range(5):
+                rows[i] += "      "
+            continue
+        for i in range(5):
+            rows[i] += glyph[i] + "  "
+    lines = [r.rstrip() for r in rows]
+    if slogan:
+        lines.append("")
+        lines.append(slogan.center(width)[:width])
+    return lines
 
 
 class DataLoader:
@@ -339,13 +376,14 @@ class TUI:
     def _draw(self, stdscr) -> None:
         stdscr.erase()
         height, width = stdscr.getmaxyx()
-        if height < 8 or width < 40:
-            stdscr.addstr(0, 0, "terminal too small (need >= 40x8)")
+        if height < 16 or width < 50:
+            stdscr.addstr(0, 0, "terminal too small (need >= 50x16)")
             stdscr.refresh()
             return
 
+        self._body_top = 9
         self._draw_header(stdscr, width)
-        body_top = 3
+        body_top = getattr(self, "_body_top", 9)
         body_height = height - body_top - 3
         try:
             handler = {
@@ -366,6 +404,45 @@ class TUI:
             self._draw_input(stdscr, height, width)
         stdscr.refresh()
 
+    def _stat_line(
+        self, stdscr, y: int, label: str, value: str, explanation: str,
+        token: str, width: int,
+    ) -> None:
+        """label, value, and why it matters — the CLI's stat contract, in curses."""
+        pair = curses.color_pair(TOKEN_PAIR.get(token, 6))
+        muted = curses.color_pair(TOKEN_PAIR["muted"])
+        from .art import pad
+
+        try:
+            stdscr.addnstr(y, 0, pad(label, 20), max(0, width - 1), muted)
+            stdscr.addnstr(y, 20, pad(value, 14), max(0, width - 21), pair)
+            if explanation:
+                stdscr.addnstr(y, 35, pad("— " + explanation, max(0, width - 35)),
+                               max(0, width - 35), muted)
+        except curses.error:
+            pass
+
+    def _spark(self, stdscr, y: int, series, label: str, width: int) -> None:
+        """Trend line with min/max/current annotated."""
+        if not series:
+            return
+        from .art import sparkline, pad
+
+        spark = sparkline(series[-200:], max(20, width - 40))
+        muted = curses.color_pair(TOKEN_PAIR["muted"])
+        accent = curses.color_pair(TOKEN_PAIR["accent"])
+        lo, hi, cur = min(series), max(series), series[-1]
+        try:
+            stdscr.addnstr(y, 0, pad(label, 16), max(0, width - 1), muted)
+            stdscr.addnstr(y, 16, spark, max(0, width - 17), accent)
+            stdscr.addnstr(
+                y + 1, 16,
+                f"lo {lo:,.2f}  hi {hi:,.2f}  now {cur:,.2f}"[: max(0, width - 17)],
+                max(0, width - 17), muted,
+            )
+        except curses.error:
+            pass
+
     def _safe(self, stdscr, y: int, x: int, text: str, width: int) -> None:
         """Write truncated to the screen width; curses raises on overflow."""
         if y >= stdscr.getmaxyx()[0] - 1:
@@ -373,29 +450,52 @@ class TUI:
         stdscr.addnstr(y, x, text, max(0, width - x - 1))
 
     def _draw_header(self, stdscr, width: int) -> None:
-        title = f" MarketBot {__version__} "
-        stdscr.addstr(0, 0, title.ljust(width), curses.color_pair(6))
-        tabs = " ".join(
-            f"{i+1}:{name}" for i, name in enumerate(SCREENS)
-        )
-        line = f" {self.symbol}  |  {tabs} "
-        self._safe(stdscr, 1, 0, line[: width - 1], width)
-        active = SCREENS[self.screen]
-        self._safe(stdscr, 2, 0, f" {active}  —  {self.status}"[: width - 1], width)
+        """Banner, then the one line that could hurt you."""
+        y = 0
+        try:
+            for line in _banner_lines("MARKETBOT", "backtest · paper · analyse", width):
+                if y >= 8:
+                    break
+                self._safe(stdscr, y, 0, line[: width - 1], width)
+                y += 1
+            y += 1
+            active = SCREENS[self.screen]
+            self._safe(stdscr, y, 0, f" {active}  —  {self.status}"[: width - 1], width)
+            y += 1
+            self._safe(stdscr, y, 0, rule(78)[: width - 1], width)
+        except Exception:  # noqa: BLE001 - never let a render bug kill the UI
+            self._safe(stdscr, 0, 0, " MarketBot ", width)
+        # the banner occupies rows 0..7; callers must start the body below it
+        self._body_top = max(y + 1, 9)
 
     def _draw_footer(self, stdscr, height: int, width: int) -> None:
-        help_line = " Tab:screen  Up/Down:select  Enter:run  /:symbol  r:refresh  q:quit "
+        """Screen list plus key hints, then the mode line.
+
+        The tab bar lives here rather than in the header: the banner occupies the
+        header, and keeping the screen list pinned at the bottom means it is
+        always visible regardless of scroll position.
+        """
+        tabs = "  ".join(f"{i+1}:{name}" for i, name in enumerate(SCREENS))
+        hint = "Tab:next  Enter:run  /:symbol  r:refresh  q:quit"
         if self.data.busy:
-            help_line += "[loading...]"
-        self._safe(stdscr, height - 2, 0, help_line[: width - 1], width)
+            hint += "  [loading]"
+        try:
+            stdscr.addstr(height - 2, 0, pad(tabs, width - 1)[: width - 1],
+                          curses.color_pair(TOKEN_PAIR["accent"]))
+            stdscr.addstr(height - 1, 0, pad(hint, width - 1)[: width - 1],
+                          curses.color_pair(TOKEN_PAIR["muted"]))
+        except curses.error:
+            pass
         from .broker.live import describe_live_status
 
         try:
             status = describe_live_status()
             mode = "LIVE" if status["live_enabled"] else "PAPER"
-            color = 3 if status["live_enabled"] else 2
-            text = f" mode: {mode}  cash: {self.config.starting_cash:,.0f}  risk/trade: {self.config.risk_per_trade:.1%} "
-            stdscr.addstr(height - 1, 0, text[: width - 1], curses.color_pair(color))
+            pair = TOKEN_PAIR["bad"] if status["live_enabled"] else TOKEN_PAIR["ok"]
+            text = (f" mode: {mode}  cash: {self.config.starting_cash:,.0f} "
+                    f" risk/trade: {self.config.risk_per_trade:.1%} ")
+            stdscr.addstr(height - 1, max(0, width - cell_width(text) - 1),
+                          text[: width - 1], curses.color_pair(pair))
         except Exception:  # noqa: BLE001
             pass
 
@@ -458,43 +558,70 @@ class TUI:
             self._safe(stdscr, y, 0, f"error: {data['error']}", width)
             return
         m = data.get("metrics") or {}
-        rows = [
-            f"return        {m.get('total_return', 0):>10.1%}",
-            f"annualized    {m.get('annualized_return') if m.get('annualized_return') is not None else 0:>10.1%}",
-            f"sharpe        {m.get('sharpe') if m.get('sharpe') is not None else 0:>10.2f}",
-            f"max drawdown  {m.get('max_drawdown', 0):>10.1%}",
-            f"halted        {str(data.get('halted')):>10} {data.get('halt_reason', '')}",
-        ]
-        for line in rows:
-            self._safe(stdscr, y, 0, line, width)
-            y += 1
-        y += 1
         ts = m.get("trade_stats") or {}
-        self._safe(stdscr, y, 0, "trade stats", width)
+
+        ret = m.get("total_return", 0.0)
+        self._stat_line(stdscr, y, "Total return", f"{ret * 100:+.1f}%",
+                         "gain or loss over the window; negative is a loss",
+                         "ok" if ret > 0 else "bad" if ret < 0 else "muted", width)
         y += 1
-        for key in ("trades", "win_rate", "profit_factor", "net_pnl", "expectancy", "avg_bars_held"):
-            value = ts.get(key)
-            if isinstance(value, float):
-                value = f"{value:,.3f}"
-            self._safe(stdscr, y, 0, f"  {key:<16} {value}", width)
-            y += 1
+        dd = m.get("max_drawdown", 0.0)
+        self._stat_line(stdscr, y, "Max drawdown", f"{dd * 100:.1f}%",
+                         "worst peak-to-trough loss; lower is better",
+                         "ok" if dd < 0.10 else "warn" if dd < 0.25 else "bad", width)
         y += 1
+        sh = m.get("sharpe")
+        self._stat_line(stdscr, y, "Sharpe",
+                         f"{sh:.2f}" if sh is not None else "n/a",
+                         "return per unit of volatility; above 1.0 is the usual bar"
+                         if sh is not None else "undefined — need at least two returns",
+                         "ok" if (sh or 0) > 1 else "warn" if sh is not None else "muted",
+                         width)
+        y += 2
+
+        n = ts.get("trades", 0)
+        note = ("no closed trades — no rate below is meaningful" if n == 0 else
+                f"only {n} — every rate below is a small-sample estimate" if n < 20 else
+                f"{n} trades — rates below are estimates")
+        self._stat_line(stdscr, y, "Trades", str(n), note,
+                         "ok" if n >= 20 else "warn", width)
+        y += 1
+        wr = ts.get("win_rate")
+        self._stat_line(stdscr, y, "Win rate",
+                         f"{wr * 100:.1f}%" if wr is not None else "n/a",
+                         "share of trades that closed in profit", "ok" if (wr or 0) >= 0.5 else "warn",
+                         width)
+        y += 1
+        pf = ts.get("profit_factor")
+        self._stat_line(stdscr, y, "Profit factor",
+                         f"{pf:.2f}" if pf else "n/a",
+                         "gross profit / gross loss; above 1.0 keeps you alive",
+                         "bad" if pf == 0 else "ok" if (pf or 0) > 1.5 else "warn", width)
+        y += 2
+
+        if data.get("halted"):
+            self._stat_line(stdscr, y, "Halted", "YES",
+                             data.get("halt_reason", "a hard limit was breached"), "bad", width)
+            y += 2
+
+        curve = data.get("equity_curve") or []
+        if curve:
+            self._spark(stdscr, y, curve, "Equity", width)
+            y += 2
+
         trades = data.get("trades") or []
-        self._safe(stdscr, y, 0, f"trades ({len(trades)})", width)
-        y += 1
-        for t in trades[-height + y - top if height > y - top else -10:]:
-            pnl = t.get("pnl", 0)
-            sign = "+" if pnl > 0 else ""
-            self._safe(
-                stdscr, y, 0,
-                f"  {t.get('side', ''):5} {t.get('entry_price', 0):>12.4f} -> "
-                f"{t.get('exit_price', 0):>12.4f}  {sign}{pnl:>10.2f}  "
-                f"{t.get('exit_reason', '')}",
-                width,
-            )
+        if y < top + height - len(trades) - 2:
+            self._safe(stdscr, y, 0, f"recent trades ({len(trades)})", width)
             y += 1
-            if y >= top + height:
-                break
+            for t in trades[-max(1, min(8, height - (y - top) - 1)):]:
+                self._safe(
+                    stdscr, y, 0,
+                    f"  {t.get('side', ''):5} {t.get('entry_price', 0):>12,.2f} -> "
+                    f"{t.get('exit_price', 0):>12,.2f}  {t.get('pnl', 0):>+9,.2f}  "
+                    f"{t.get('exit_reason', '')}",
+                    width,
+                )
+                y += 1
 
     def _draw_compare(self, stdscr, top: int, height: int, width: int) -> None:
         y = top
@@ -656,24 +783,34 @@ class TUI:
         cfg = self.config
         from .broker.live import describe_live_status
 
-        lines = [
-            ("execution mode", "LIVE" if cfg.live_trading else "PAPER (simulated)"),
-            ("starting cash", f"{cfg.starting_cash:,.2f}"),
-            ("fee rate", f"{cfg.fee_rate:.3%} per side"),
-            ("slippage", f"{cfg.slippage_rate:.3%} per side"),
-            ("risk per trade", f"{cfg.risk_per_trade:.2%} of equity"),
-            ("max position", f"{cfg.max_position_pct:.0%} of equity"),
-            ("max open positions", str(cfg.max_open_positions)),
-            ("max drawdown halt", f"{cfg.max_drawdown_pct:.0%}"),
-            ("max daily loss halt", f"{cfg.max_daily_loss_pct:.0%}"),
-            ("shorting", "enabled" if cfg.allow_short else "disabled"),
-        ]
         y = top
-        self._safe(stdscr, y, 0, "risk limits (hard stops — a breach halts trading)", width)
+        self._safe(stdscr, y, 0, "hard stops — a breach halts trading until reset", width)
         y += 1
-        for label, value in lines:
-            self._safe(stdscr, y, 0, f"  {label:<22} {value}", width)
+        rows = [
+            ("execution mode", "LIVE" if cfg.live_trading else "PAPER (simulated)",
+             "live requires an explicit flag, credentials, and a confirmation phrase"),
+            ("starting cash", f"{cfg.starting_cash:,.2f}", "the account size backtests start from"),
+            ("fee rate", f"{cfg.fee_rate:.3%} per side", "charged on every fill; a zero-fee backtest is a lie"),
+            ("slippage", f"{cfg.slippage_rate:.3%} per side", "adverse fill assumption on top of the fee"),
+            ("risk per trade", f"{cfg.risk_per_trade:.2%} of equity", "size comes from the stop distance, not conviction"),
+            ("max position", f"{cfg.max_position_pct:.0%} of equity", "no single idea may exceed this"),
+            ("max open positions", str(cfg.max_open_positions), "the book closes at this count"),
+            ("max drawdown halt", f"{cfg.max_drawdown_pct:.0%}", "equity loss from peak that stops trading"),
+            ("max daily loss halt", f"{cfg.max_daily_loss_pct:.0%}", "session loss that stops trading for the day"),
+            ("shorting", "enabled" if cfg.allow_short else "disabled", "shorts need an explicit allow"),
+        ]
+        token_for = {
+            "execution mode": "bad" if cfg.live_trading else "ok",
+            "max drawdown halt": "warn",
+            "max daily loss halt": "warn",
+        }
+        for label, value, note in rows:
+            if y >= top + height - 4:
+                break
+            self._stat_line(stdscr, y, label, value, note,
+                             token_for.get(label, "muted"), width)
             y += 1
+
         y += 1
         try:
             status = describe_live_status()
@@ -686,17 +823,20 @@ class TUI:
             ):
                 self._safe(stdscr, y, 0, f"  - {req}", width)
                 y += 1
-            self._safe(stdscr, y, 0, f"  status: {status['reason']}", width)
-            y += 1
+            self._stat_line(stdscr, y, "status", status["reason"][:40], "",
+                             "ok" if status["live_enabled"] else "muted", width)
+            y += 2
         except Exception:  # noqa: BLE001
             pass
-        y += 1
+
         for note in (
             "A signal is never filled on the bar it was generated from.",
             "Position size comes from the stop distance, not from conviction.",
             "The risk manager's veto cannot be overridden by the portfolio manager.",
             "Educational software. Not financial advice.",
         ):
+            if y >= top + height - 1:
+                break
             self._safe(stdscr, y, 0, f"  {note}", width)
             y += 1
 

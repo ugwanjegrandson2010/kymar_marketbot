@@ -20,8 +20,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 
 
-def run_tui_session(keys: bytes, wait: float = 1.5, cols: int = 120, rows: int = 36) -> str:
-    """Launch the TUI in a pty, send `keys`, and return everything it printed."""
+def run_tui_session(keys: bytes, wait: float = 1.5, cols: int = 140, rows: int = 40) -> str:
+    """Launch the TUI in a pty, send `keys`, and return everything it printed.
+
+    Defaults to 140x40: the banner alone occupies 9 rows, so a smaller default
+    would put every test into the 'terminal too small' branch.
+    """
     master, slave = pty.openpty()
     import fcntl
     import struct
@@ -76,7 +80,15 @@ class TestTUI(unittest.TestCase):
         cls.output = run_tui_session(b"\tq", wait=3.0)
 
     def test_starts_and_renders_the_header(self):
-        self.assertIn("MarketBot", self.output)
+        """The banner replaces the literal word, so check the glyphs instead."""
+        # 'M' in the block font is "#    #" / "##  ##" / "# ## #" / "#    #" / "#    #"
+        self.assertIn("######", self.output)   # the E and B of MARKETBOT
+        self.assertIn("# ## #", self.output)   # the M
+
+    def test_renders_the_ascii_banner(self):
+        """Every banner row is drawn, not just the first."""
+        rows = [l for l in self.output.replace("\r", "\n").split("\n") if "#" in l]
+        self.assertGreaterEqual(len(rows), 4, f"only {len(rows)} banner rows rendered")
 
     def test_shows_the_screen_tabs(self):
         for tab in ("Markets", "Backtest", "Compare", "Optimize", "AI Firm", "Indicators", "Risk"):
@@ -89,6 +101,16 @@ class TestTUI(unittest.TestCase):
     def test_tab_navigation_renders_a_different_screen(self):
         nav = run_tui_session(b"\t\t\t\tq", wait=2.5)
         self.assertIn("multi-agent firm", nav.lower())
+
+    def test_explains_its_statistics(self):
+        """A bare number is noise; the screen must explain what it means."""
+        nav = run_tui_session(b"\t" * 6 + b"q", wait=2.5)   # -> Risk
+        self.assertIn("equity loss from peak", nav)
+
+    def test_declares_a_minimum_size(self):
+        """Below the declared floor the app says so instead of crashing."""
+        tiny = run_tui_session(b"q", wait=1.5, cols=40, rows=8)
+        self.assertIn("too small", tiny)
 
     def test_quit_is_clean(self):
         # If the process failed to exit, run_tui_session kills it; reaching here

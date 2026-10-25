@@ -84,10 +84,9 @@ def cmd_backtest(args) -> int:
     if args.json:
         _print(result.to_dict())
     else:
-        print(result.metrics.summary())
-        print(f"  trades: {result.metrics.trade_stats}")
-        print(f"  accuracy: {result.metrics.accuracy}")
-        print(f"  halted: {result.halted} {result.halt_reason}")
+        from .report import backtest_report
+
+        print(backtest_report(result))
     return 0
 
 
@@ -103,17 +102,9 @@ def cmd_compare(args) -> int:
     if args.json:
         _print(rows)
     else:
-        print(f"{'strategy':26} {'return':>9} {'sharpe':>7} {'maxDD':>8} {'trades':>7} {'win%':>6}")
-        for r in rows:
-            if "error" in r:
-                print(f"{r['strategy']:26} ERROR: {r['error'][:60]}")
-                continue
-            print(
-                f"{r['strategy']:26} {r['total_return']:>8.1%} "
-                f"{(r['sharpe'] if r['sharpe'] is not None else 0):>7.2f} "
-                f"{r['max_drawdown']:>7.1%} {r['trades']:>7} "
-                f"{(r['win_rate'] or 0):>5.0%}"
-            )
+        from .report import compare_report
+
+        print(compare_report(rows))
     return 0
 
 
@@ -211,20 +202,9 @@ def cmd_firm(args) -> int:
     if args.json:
         _print(result)
     else:
-        print(f"symbol: {result['symbol']}")
-        print(f"verdict: {result['verdict']}\n")
-        for a in result["analysts"]:
-            print(f"  {a['role']:14} {a['direction']:5} {a['confidence']:.0%}  {a['reasoning']}")
-        print(f"\ndebate: {result['debate']['winner']} "
-              f"(score {result['debate']['reconciled_score']:+.2f}, "
-              f"confidence {result['debate']['confidence']:.0%})")
-        d = result["decision"]
-        print(f"decision: {d['action']} via {d['strategy']} "
-              f"conviction {d['conviction']:.0%}")
-        print(f"  risk approved: {d['risk_approved']}  "
-              f"portfolio approved: {d['portfolio_approved']}")
-        if d["reject_reason"]:
-            print(f"  rejected: {d['reject_reason']}")
+        from .report import firm_report
+
+        print(firm_report(result))
     return 0
 
 
